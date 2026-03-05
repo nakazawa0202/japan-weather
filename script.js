@@ -204,30 +204,59 @@ function parseForecast(data, prefName) {
 
 // メイン処理
 async function main() {
-  const loadingEl = document.getElementById('loading');
-  const regionsEl = document.getElementById('regions');
-  const errorEl = document.getElementById('error');
-  const updateEl = document.getElementById('update-time');
+  const loadingEl  = document.getElementById('loading');
+  const regionsEl  = document.getElementById('regions');
+  const errorEl    = document.getElementById('error');
+  const updateEl   = document.getElementById('update-time');
+  const mapSection = document.getElementById('map-section');
+  const listSection = document.getElementById('list-section');
 
   try {
-    // 全都道府県を並列取得
-    const allPrefs = REGIONS.flatMap(r => r.prefectures);
-    const fetchPromises = allPrefs.map(p =>
-      fetchForecast(p.code)
-        .then(data => parseForecast(data, p.name))
-        .catch(() => ({ prefName: p.name, days: [] }))
+    // 地域別カード + 地図用の全都道府県を並列取得
+    const allPrefs = [
+      ...REGIONS.flatMap(r => r.prefectures),
+      // 地図専用（地域一覧にないもの）
+      ...MAP_PREFS
+        .filter(mp => !REGIONS.flatMap(r => r.prefectures).some(p => p.code === mp.code))
+        .map(mp => ({ name: mp.name, code: mp.code }))
+    ];
+
+    // 重複排除
+    const uniquePrefs = [...new Map(allPrefs.map(p => [p.code, p])).values()];
+
+    const results = await Promise.all(
+      uniquePrefs.map(p =>
+        fetchForecast(p.code)
+          .then(data => parseForecast(data, p.name))
+          .catch(() => ({ prefName: p.name, days: [] }))
+      )
     );
 
-    const results = await Promise.all(fetchPromises);
     const resultMap = Object.fromEntries(results.map(r => [r.prefName, r.days]));
+
+    // 地図用: MAP_PREFS の name でも引けるように補完
+    for (const mp of MAP_PREFS) {
+      if (!resultMap[mp.name]) {
+        // 地域一覧と名前が違う場合（例: "北海道（札幌）" → "北海道"）
+        const match = results.find(r =>
+          REGIONS.flatMap(rg => rg.prefectures).find(p => p.code === mp.code && p.name === r.prefName)
+        );
+        if (match) resultMap[mp.name] = match.days;
+      }
+    }
 
     // 更新日時
     const now = new Date();
     updateEl.textContent = `更新: ${now.toLocaleDateString('ja-JP')} ${now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
 
-    // DOM構築
     loadingEl.classList.add('hidden');
-    let prefIndex = 0;
+
+    // 地図レンダリング
+    mapSection.classList.remove('hidden');
+    renderMap(resultMap);
+
+    // 地域別一覧
+    listSection.classList.remove('hidden');
     for (const region of REGIONS) {
       const section = document.createElement('section');
       section.className = 'region-section';
@@ -245,7 +274,6 @@ async function main() {
               <div class="forecast-days" style="justify-content:center;color:#a0aec0;font-size:0.8rem;padding:1rem;">取得できませんでした</div>
             </div>`;
         }
-        prefIndex++;
       }
       regionsEl.appendChild(section);
     }

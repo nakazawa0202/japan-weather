@@ -18,13 +18,25 @@
       <p>天気情報を取得中...</p>
     </div>
     <div id="error" class="error hidden"></div>
-    <div id="regions"></div>
+
+    <!-- 日本地図 -->
+    <section class="map-section hidden" id="map-section">
+      <h2 class="section-title">地図から探す <span class="section-hint">都道府県をクリックで天気を表示</span></h2>
+      <div id="map-container" class="map-container"></div>
+    </section>
+
+    <!-- 地域別一覧 -->
+    <section class="list-section hidden" id="list-section">
+      <h2 class="section-title">地域別一覧</h2>
+      <div id="regions"></div>
+    </section>
   </main>
 
   <footer>
     <p>データ提供: <a href="https://www.jma.go.jp/" target="_blank">気象庁</a></p>
   </footer>
 
+  <script src="japan-map.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
