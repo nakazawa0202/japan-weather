@@ -1,5 +1,4 @@
-// 都道府県の地理座標（緯度・経度）→ SVG座標変換用データ
-// SVG変換式: x = (lon - 129) * 46,  y = (45.5 - lat) * 46
+// SVG座標変換: x = (lon - 129) * 46,  y = (45.5 - lat) * 46
 const MAP_PREFS = [
   { id: 'hokkaido',   name: '北海道',   code: '016000', lat: 43.2, lon: 142.8 },
   { id: 'aomori',     name: '青森',     code: '020000', lat: 40.8, lon: 140.7 },
@@ -50,36 +49,39 @@ const MAP_PREFS = [
   { id: 'okinawa',    name: '沖縄',     code: '472000', lat: 26.2, lon: 127.7, inset: true },
 ];
 
-const SCALE = 46;
-const LON0  = 129;
-const LAT0  = 45.5;
+// 日本の主要島 SVGパス (簡略化した輪郭, viewBox "0 0 800 700")
+// 座標変換: x=(lon-129)*46, y=(45.5-lat)*46
+const ISLAND_PATHS = [
+  // 北海道
+  'M 565 8 L 610 8 L 660 20 L 754 28 L 748 72 L 698 98 L 655 128 L 608 156 L 570 184 L 555 178 L 538 165 L 543 142 L 555 118 L 562 90 L 565 8 Z',
+  // 本州 (太平洋岸→紀伊半島→瀬戸内→山陰→能登→東北)
+  'M 522 186 L 564 222 L 576 272 L 582 322 L 574 390 L 548 462 L 518 476 L 502 480 L 456 502 L 432 504 L 380 506 L 354 524 L 338 536 L 316 556 L 298 542 L 284 536 L 272 498 L 258 498 L 230 498 L 194 508 L 162 528 L 88 530 L 92 510 L 115 510 L 156 460 L 200 460 L 262 460 L 298 460 L 304 436 L 350 414 L 352 395 L 380 368 L 358 392 L 350 414 L 416 390 L 460 348 L 500 268 L 514 226 L 522 186 Z',
+  // 四国
+  'M 162 526 L 198 514 L 258 516 L 270 532 L 242 566 L 184 590 L 140 566 L 139 542 L 162 526 Z',
+  // 九州
+  'M 68 540 L 84 534 L 122 538 L 122 572 L 112 646 L 80 670 L 58 642 L 36 590 L 40 558 L 68 540 Z',
+];
 
-function toSVG(lat, lon) {
-  return {
-    x: (lon - LON0) * SCALE,
-    y: (LAT0 - lat) * SCALE,
-  };
-}
-
-// 天気コード → 背景グラデ色
-function weatherColor(code) {
-  if (!code) return ['#94a3b8', '#64748b'];
-  const c = parseInt(code);
-  if (c === 100 || c === 101)            return ['#fde68a', '#f59e0b']; // 晴れ
-  if (c >= 102 && c <= 119)             return ['#bfdbfe', '#60a5fa']; // 晴れ時々くもり
-  if (c === 200 || c === 201)            return ['#cbd5e1', '#94a3b8']; // くもり
-  if (c >= 202 && c <= 219)             return ['#bfdbfe', '#93c5fd']; // くもり時々晴れ
-  if ((c >= 130 && c <= 139) || (c >= 300 && c <= 319)) return ['#93c5fd', '#3b82f6']; // 雨
-  if (c >= 400 && c <= 419)             return ['#e0e7ff', '#a5b4fc']; // 雪
+// 天気コード → 背景色
+function weatherColor(icon) {
+  if (!icon || icon === '…') return ['#cbd5e1', '#94a3b8'];
+  if (icon === '☀️')  return ['#fde68a', '#f59e0b'];
+  if (icon === '🌤️')  return ['#fef3c7', '#fbbf24'];
+  if (icon === '⛅')   return ['#dbeafe', '#93c5fd'];
+  if (icon === '🌥️')  return ['#e2e8f0', '#94a3b8'];
+  if (icon === '☁️')  return ['#cbd5e1', '#64748b'];
+  if (icon === '🌦️')  return ['#bfdbfe', '#60a5fa'];
+  if (icon === '🌧️')  return ['#bfdbfe', '#3b82f6'];
+  if (icon === '🌨️' || icon === '❄️') return ['#e0e7ff', '#818cf8'];
   return ['#e2e8f0', '#94a3b8'];
 }
 
-// ポップアップHTMLを生成
-function buildPopupHTML(pref, days) {
+// ポップアップ内容
+function buildPopupHTML(days) {
   if (!days || days.length === 0) {
-    return `<p style="color:#94a3b8;text-align:center;">データ取得中...</p>`;
+    return '<p style="text-align:center;color:#94a3b8;padding:1rem;">データ取得中...</p>';
   }
-  return days.map((d, i) => `
+  return `<div class="popup-days">${days.map((d, i) => `
     <div class="popup-day ${i === 0 ? 'popup-today' : ''}">
       <div class="popup-day-label">${d.label.replace('\n', '<br>')}</div>
       <div class="popup-day-icon">${d.icon}</div>
@@ -88,98 +90,98 @@ function buildPopupHTML(pref, days) {
         ${d.tempHigh !== null ? `<span class="temp-high">${d.tempHigh}°</span>` : ''}
         ${d.tempLow  !== null ? `<span class="temp-low">${d.tempLow}°</span>`  : ''}
       </div>
-    </div>
-  `).join('');
+    </div>`).join('')}</div>`;
 }
 
-// 地図SVGを生成してDOMに挿入
+// 地図SVGを生成
 function renderMap(weatherMap) {
   const container = document.getElementById('map-container');
   if (!container) return;
 
-  // SVG viewBox
-  const VW = 800, VH = 680;
+  const VW = 800, VH = 700;
+  // 沖縄インセット枠
+  const IX = 18, IY = 580, IW = 130, IH = 100;
 
-  // 沖縄はインセット表示
-  const OKINAWA_INSET = { x: 20, y: VH - 120, w: 120, h: 110 };
+  // 島の輪郭
+  const islandsSVG = ISLAND_PATHS.map(d =>
+    `<path d="${d}" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.2" stroke-linejoin="round"/>`
+  ).join('');
 
-  let circles = '';
+  // 都道府県ドット
+  let dotsSVG = '';
   for (const pref of MAP_PREFS) {
-    const days = weatherMap[pref.name] || [];
-    const todayCode = days[0] ? (days[0].icon === '☀️' ? 100 : days[0].icon === '☁️' ? 200 : days[0].icon === '🌧️' ? 300 : 100) : null;
-    const [c1, c2] = weatherColor(todayCode);
-    const icon = days[0] ? days[0].icon : '…';
+    const days  = weatherMap[pref.name] || [];
+    const icon  = days[0] ? days[0].icon : '…';
+    const [c1, c2] = weatherColor(icon);
+    const gradId = `g${pref.id}`;
 
     let cx, cy;
     if (pref.inset) {
-      cx = OKINAWA_INSET.x + OKINAWA_INSET.w / 2;
-      cy = OKINAWA_INSET.y + OKINAWA_INSET.h / 2;
+      cx = IX + IW / 2;
+      cy = IY + IH / 2;
     } else {
-      const pos = toSVG(pref.lat, pref.lon);
-      cx = pos.x;
-      cy = pos.y;
+      cx = Math.round((pref.lon - 129) * 46);
+      cy = Math.round((45.5 - pref.lat) * 46);
     }
 
-    const gradId = `grad-${pref.id}`;
-    circles += `
-      <defs>
-        <radialGradient id="${gradId}" cx="40%" cy="35%" r="60%">
-          <stop offset="0%"   stop-color="${c1}"/>
-          <stop offset="100%" stop-color="${c2}"/>
-        </radialGradient>
-      </defs>
-      <g class="pref-dot" data-id="${pref.id}" data-name="${pref.name}"
-         transform="translate(${cx},${cy})" style="cursor:pointer">
-        <circle r="22" fill="url(#${gradId})" stroke="white" stroke-width="1.5"
-                class="pref-circle" filter="url(#dropshadow)"/>
-        <text class="pref-icon-text" text-anchor="middle" dominant-baseline="central"
-              dy="-4" font-size="14">${icon}</text>
-        <text class="pref-name-text" text-anchor="middle" dominant-baseline="central"
-              dy="11" font-size="7" fill="#1e293b" font-weight="600">${pref.name}</text>
+    dotsSVG += `
+      <defs><radialGradient id="${gradId}" cx="38%" cy="32%" r="62%">
+        <stop offset="0%" stop-color="${c1}"/>
+        <stop offset="100%" stop-color="${c2}"/>
+      </radialGradient></defs>
+      <g class="pref-dot" data-name="${pref.name}" style="cursor:pointer"
+         transform="translate(${cx},${cy})">
+        <circle r="20" fill="url(#${gradId})" stroke="white" stroke-width="1.8"
+                class="pref-circle" filter="url(#sh)"/>
+        <text text-anchor="middle" dominant-baseline="central"
+              dy="-4" font-size="13" style="pointer-events:none;user-select:none">${icon}</text>
+        <text text-anchor="middle" dominant-baseline="central"
+              dy="11" font-size="6.5" fill="#1e293b" font-weight="700"
+              style="pointer-events:none;user-select:none;font-family:sans-serif">${pref.name}</text>
       </g>`;
   }
 
   // 沖縄インセット枠
-  const insetBox = `
-    <rect x="${OKINAWA_INSET.x - 10}" y="${OKINAWA_INSET.y - 14}"
-          width="${OKINAWA_INSET.w + 20}" height="${OKINAWA_INSET.h + 10}"
-          rx="10" fill="white" fill-opacity="0.8" stroke="#bae6fd" stroke-width="1.5"/>
-    <text x="${OKINAWA_INSET.x + OKINAWA_INSET.w / 2}" y="${OKINAWA_INSET.y - 4}"
-          text-anchor="middle" font-size="9" fill="#0369a1" font-weight="700">沖縄（拡大表示）</text>`;
+  const insetSVG = `
+    <rect x="${IX-6}" y="${IY-16}" width="${IW+12}" height="${IH+16}"
+          rx="10" fill="white" fill-opacity="0.9" stroke="#93c5fd" stroke-width="1.5"/>
+    <text x="${IX + IW/2}" y="${IY-4}" text-anchor="middle"
+          font-size="9" fill="#0369a1" font-weight="700"
+          style="font-family:sans-serif">沖縄（拡大）</text>`;
 
   container.innerHTML = `
     <svg viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg"
          style="width:100%;max-width:${VW}px;height:auto;display:block;margin:0 auto">
       <defs>
-        <filter id="dropshadow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.15"/>
+        <filter id="sh" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-opacity="0.2"/>
         </filter>
       </defs>
-      <!-- 背景 -->
-      <rect width="${VW}" height="${VH}" fill="transparent"/>
-      ${insetBox}
-      ${circles}
+      <!-- 海の背景 -->
+      <rect width="${VW}" height="${VH}" fill="#f0f9ff" rx="12"/>
+      <!-- 島の輪郭 -->
+      ${islandsSVG}
+      <!-- 沖縄インセット枠 -->
+      ${insetSVG}
+      <!-- 都道府県ドット -->
+      ${dotsSVG}
     </svg>`;
 
-  // クリックイベント
+  // クリック・ホバーイベント
   container.querySelectorAll('.pref-dot').forEach(el => {
-    el.addEventListener('click', (e) => {
+    el.addEventListener('click', e => {
       e.stopPropagation();
       const name = el.dataset.name;
-      const days = weatherMap[name] || [];
-      showPopup(name, days, e.clientX, e.clientY);
+      showPopup(name, weatherMap[name] || [], e.clientX, e.clientY);
     });
-    el.addEventListener('mouseenter', () => {
-      el.querySelector('.pref-circle').setAttribute('r', '25');
-    });
-    el.addEventListener('mouseleave', () => {
-      el.querySelector('.pref-circle').setAttribute('r', '22');
-    });
+    const circle = el.querySelector('.pref-circle');
+    el.addEventListener('mouseenter', () => circle.setAttribute('r', '23'));
+    el.addEventListener('mouseleave', () => circle.setAttribute('r', '20'));
   });
 }
 
 // ポップアップ表示
-function showPopup(prefName, days, clientX, clientY) {
+function showPopup(prefName, days, cx, cy) {
   let popup = document.getElementById('map-popup');
   if (!popup) {
     popup = document.createElement('div');
@@ -191,24 +193,24 @@ function showPopup(prefName, days, clientX, clientY) {
   popup.innerHTML = `
     <div class="popup-header">
       <span class="popup-title">${prefName}</span>
-      <button class="popup-close" onclick="document.getElementById('map-popup').classList.add('hidden')">✕</button>
+      <button class="popup-close"
+        onclick="document.getElementById('map-popup').classList.add('hidden')">✕</button>
     </div>
-    <div class="popup-days">${buildPopupHTML(prefName, days)}</div>`;
+    ${buildPopupHTML(days)}`;
 
   popup.classList.remove('hidden');
 
-  // 位置調整
-  const pw = 280, ph = 160;
-  let left = clientX + 12;
-  let top  = clientY + 12;
-  if (left + pw > window.innerWidth  - 16) left = clientX - pw - 12;
-  if (top  + ph > window.innerHeight - 16) top  = clientY - ph - 12;
-  popup.style.left = `${left}px`;
-  popup.style.top  = `${top}px`;
+  const pw = 310, ph = 170;
+  let left = cx + 14;
+  let top  = cy + 14;
+  if (left + pw > window.innerWidth  - 12) left = cx - pw - 14;
+  if (top  + ph > window.innerHeight - 12) top  = cy - ph - 14;
+  popup.style.left = `${Math.max(8, left)}px`;
+  popup.style.top  = `${Math.max(8, top)}px`;
 }
 
-// 外クリックで閉じる
+// 地図外クリックでポップアップを閉じる
 document.addEventListener('click', () => {
-  const popup = document.getElementById('map-popup');
-  if (popup) popup.classList.add('hidden');
+  const p = document.getElementById('map-popup');
+  if (p) p.classList.add('hidden');
 });
